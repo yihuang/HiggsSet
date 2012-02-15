@@ -182,16 +182,17 @@ data Property         = Bijective
 data Order            = Ascending
                       | Descending
 
-data MarginType = -- | The wrapped element is not included
-                  Open
-                  -- | The wrapped element is included
-                | Close
-                  -- | The wrapped element just serves as a proxy. It is safe to use 'undefined'.
-                | Infinite
+data Margin a = -- | The wrapped element is not included
+                Open a
+                -- | The wrapped element is included
+              | Closed a
+                -- | The wrapped element just serves as a proxy. It is safe to use 'undefined'.
+              | Infinite a
 
-data Margin a = Margin { marginType :: MarginType
-                       , unMargin :: a
-                       }
+unMargin :: Margin a -> a
+unMargin (Open a)     = a
+unMargin (Closed a)    = a
+unMargin (Infinite a) = a
 
 data SelectionSet = Everything
                   | Set !IS.IntSet
@@ -348,26 +349,26 @@ resolve (Range a b)
   = do ind <- fmap (index (unMargin a)) ask
        case ind of
          SingletonMap ind1 -> do let ind2 = case a of
-                                              Margin Infinite _ -> ind1
+                                              Infinite _ -> ind1
                                               _          -> let (ma,la) = TM.search (unMargin a) ind1
                                                             in  f a ma $ TM.after la
                                  let ind3 = case b of
-                                              Margin Infinite _ -> ind2
+                                              Infinite _ -> ind2
                                               _          -> let (mb,lb) = TM.search (unMargin b) ind2
                                                             in  f b mb $ TM.before lb
                                  return $ Set $ IS.fromList $ TM.elems ind3
          MultiMap     ind1 -> do let ind2 = case a of
-                                              Margin Infinite _ -> ind1
+                                              Infinite _ -> ind1
                                               _          -> let (ma,la) = TM.search (unMargin a) ind1
                                                             in  f a ma $ TM.after la
                                  let ind3 = case b of
-                                              Margin Infinite _ -> ind2
+                                              Infinite _ -> ind2
                                               _          -> let (mb,lb) = TM.search (unMargin b) ind2
                                                             in  f b mb $ TM.before lb
                                  return $ Set $ foldl' IS.union IS.empty $ TM.elems ind3
   where
     f           :: Margin i -> Maybe b -> TM.TMap i b -> TM.TMap i b
-    f (Margin Close x) = maybe id (TM.insert x)
+    f (Closed x) = maybe id (TM.insert x)
     f _          = const id
 
 resolve (Union a b) = do
@@ -416,23 +417,23 @@ everything        = return $ SSet Everything
 
 -- | Select all elements that matching the given index position.
 equals           :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-equals i          = return $ Range (Margin Close i) (Margin Close i)
+equals i          = return $ Range (Closed i) (Closed i)
 
 -- | Select all elements that are /strictly/ greater than the given index position (only within the given subindex).
 greater          :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-greater i         = return $ Range (Margin Open i) (Margin Infinite i)
+greater i         = return $ Range (Open i) (Infinite i)
 
 -- | Select all elements that are greater or equal than the given index position (only within the given subindex).
 greaterEq        :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-greaterEq i       = return $ Range (Margin Close i) (Margin Infinite i)
+greaterEq i       = return $ Range (Closed i) (Infinite i)
 
 -- | Select all elements that are /strictly/ lower than the given index position (only within the given subindex).
 lower            :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-lower i           = return $ Range (Margin Infinite i) (Margin Open i)
+lower i           = return $ Range (Infinite i) (Open i)
 
 -- | Select all elements that are lower or equal than the given index position (only within the given subindex).
 lowerEq          :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-lowerEq i         = return $ Range (Margin Infinite i) (Margin Close i)
+lowerEq i         = return $ Range (Infinite i) (Closed i)
 
 -- | Selects all elements within a certain range (must not leave a subindex).
 range            :: (Indexable a, Index i, IndexOf a ~ i) => Margin i -- ^ the lower margin
@@ -496,7 +497,7 @@ updateLookupUnsafe ix f i s
 --   > let p = concatMap snd $ groupOver
 --   >                           Ascending
 --   >                           everything
---   >                           [(Margin Infinite (IPriceInEuro 10), Margin Infinite (IPriceInEuro undefined)]
+--   >                           [(Infinite (IPriceInEuro 10), Infinite (IPriceInEuro undefined)]
 --   >                           myHiggsSet
 --
 --
@@ -514,7 +515,7 @@ updateLookupUnsafe ix f i s
 --   >                             )
 --   >                             `intersection` lowerEq (IPrice 40)
 --   >                           )
---   >                           [Margin Close (IYear 1987), Margin Open (IYear 2011)]
+--   >                           [Closed (IYear 1987), Open (IYear 2011)]
 --   >                           myHiggsSet
 --
 --   In certain applications one needs something that is @LIMIT@ in SQL for getting the result segmentwise.
@@ -541,11 +542,11 @@ groupOver order query intervals s
        f selection (a, b)
                   = case index (unMargin a) s of
                       SingletonMap ind1 -> let    ind2      = case a of
-                                                                Margin Infinite _ -> ind1
+                                                                Infinite _ -> ind1
                                                                 _          -> let (ma,la) = TM.search (unMargin a) ind1
                                                                               in  t a ma $ TM.after la
                                            in let ind3      = case b of
-                                                                Margin Infinite _ -> ind2
+                                                                Infinite _ -> ind2
                                                                 _          -> let (mb,lb) = TM.search (unMargin b) ind2
                                                                               in  t b mb $ TM.before lb
                                            in let traverse  = case order of
@@ -563,11 +564,11 @@ groupOver order query intervals s
                                                                   )
                                                                   (traverse ind3)
                       MultiMap     ind1 -> let    ind2      = case a of
-                                                                Margin Infinite _ -> ind1
+                                                                Infinite _ -> ind1
                                                                 _          -> let (ma,la) = TM.search (unMargin a) ind1
                                                                               in  t a ma $ TM.after la
                                            in let ind3      = case b of
-                                                                Margin Infinite _ -> ind2
+                                                                Infinite _ -> ind2
                                                                 _          -> let (mb,lb) = TM.search (unMargin b) ind2
                                                                               in  t b mb $ TM.before lb
                                            in let traverse  = case order of
@@ -587,7 +588,7 @@ groupOver order query intervals s
                                                                   )
                                                                   (traverse ind3)
        t            :: Margin i -> Maybe b -> TM.TMap i b -> TM.TMap i b
-       t (Margin Close x)  = maybe id (TM.insert x)
+       t (Closed x)  = maybe id (TM.insert x)
        t _           = const id
 
 toListDesc  :: (TM.TKey i) => TM.TMap i a -> [(i,a)]
