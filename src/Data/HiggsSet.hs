@@ -1,5 +1,5 @@
-{-# OPTIONS -XFlexibleInstances -XUndecidableInstances -XTupleSections #-}
-{-# LANGUAGE TemplateHaskell, ExistentialQuantification, TypeFamilies, ScopedTypeVariables, BangPatterns #-}
+{-# OPTIONS -fno-warn-orphans #-}
+{-# LANGUAGE ExistentialQuantification, TypeFamilies, ScopedTypeVariables, BangPatterns, TupleSections #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Data.HiggsSet
@@ -12,7 +12,7 @@
 --
 -- >  import qualified Data.HiggsSet as HS
 --
--- Throughout this documentation we'll assume that we want work on a set 
+-- Throughout this documentation we'll assume that we want work on a set
 -- of the following example type and its index:
 --
 -- >  data Book      = Book
@@ -28,7 +28,7 @@
 -- >                 | IAuthor           String
 -- >                 | IPriceInEuro      Rational
 -- >                 | IPublisherAndYear String   Word
--- >                 | INewerThan2000 
+-- >                 | INewerThan2000
 -- >                 | ITitle            String
 --
 -----------------------------------------------------------------------------
@@ -40,7 +40,7 @@ module Data.HiggsSet
   , Index     (..)
    -- * General information
   , size
-    -- * Construction 
+    -- * Construction
   , empty
   , insert
   , delete
@@ -77,43 +77,31 @@ module Data.HiggsSet
   , HiggsQuery ()
   , Selection  (..)
   ) where
-   
 
 import Prelude hiding (lookup)
-
 import GHC.Exts (build)
-
-import Control.DeepSeq
-import Data.TrieMap.Representation
-
-import Data.Maybe
+import Data.Maybe (mapMaybe, fromMaybe)
 import Data.List hiding (insert, null, lookup, delete, union)
-
-import Control.Applicative hiding (empty)
-import Control.Monad
-import Control.Monad.Trans
-import Control.Monad.Reader
+import Control.DeepSeq (NFData(..))
+import Control.Monad.Reader (Reader, runReader, ask, asks)
 
 import qualified Data.Set     as S
 import qualified Data.IntSet  as IS
-import qualified Data.Map     as M
 import qualified Data.IntMap  as IM
 import qualified Data.TrieMap as TM
 import qualified Data.Vector  as V
 
-import Data.Function (on)
-
-data IndexMap i   = SingletonMap { unSingletonMap :: !(TM.TMap i Int) }
-                  | MultiMap     { unMultiMap     :: !(TM.TMap i IS.IntSet) }
+data IndexMap i   = SingletonMap !(TM.TMap i Int)
+                  | MultiMap     !(TM.TMap i IS.IntSet)
 
 data HiggsSet a i = HiggsSet
-                    { elements       :: !(IM.IntMap a) 
+                    { elements       :: !(IM.IntMap a)
                     , maxKey         :: !Int
                     , indizes        :: !(V.Vector (IndexMap i))
                     }
 
 -- | Don't rely on this. I just had no time to hide the plumbing, yet.
-type HiggsQuery e i a = Reader (HiggsSet e i) a 
+type HiggsQuery e i a = Reader (HiggsSet e i) a
 
 -- | The type to be indexed needs to be an instance of `Indexable`.
 --   Furthermore you have to specify an associated type
@@ -125,8 +113,8 @@ type HiggsQuery e i a = Reader (HiggsSet e i) a
 --   >    project (IAuthor _)             x = map IAuthor (toList $ authors x)
 --   >    project (IPriceInEuro _)        x = [IPriceInEuro $ priceInEuro (price x)]
 --   >    project (IPublisherAndYear _ _) x = [IPublisherAndYear (publisher x) (year x)]
---   >    project (INewerThan2000 _)      x = [INewerThan2000 | year x >= 2000] 
---   >    project (ITitle _)              x = map ITitle $ words $ title x 
+--   >    project (INewerThan2000 _)      x = [INewerThan2000 | year x >= 2000]
+--   >    project (ITitle _)              x = map ITitle $ words $ title x
 class Indexable a where
   type IndexOf a
   project    :: IndexOf a -> a -> [IndexOf a]
@@ -134,11 +122,11 @@ class Indexable a where
   share _ a   = a
 
 -- | The associated index type needs to be an instance of `Index`.
---   First of all this means that it needs to be an instance of 
---   the context classes, whereas we exploit them a bit. 
+--   First of all this means that it needs to be an instance of
+--   the context classes, whereas we exploit them a bit.
 --   Specifying properties of the indizes is optional, but might result
---   in better time/space efficiency. 
---   
+--   in better time/space efficiency.
+--
 --   See the example:
 --
 --   >  instance Bounded BookIndex where
@@ -152,12 +140,12 @@ class Indexable a where
 --   >    fromEnum (IPublisherAndYear _ _) = 3
 --   >    fromEnum (INewerThan2000 _)      = 4
 --   >    fromEnum (ITitle _)              = 5
---   >    toEnum 0 = (IIsbn undefined)              
---   >    toEnum 1 = (IAuthor undefined)            
---   >    toEnum 2 = (IPriceInEuro undefined)       
+--   >    toEnum 0 = (IIsbn undefined)
+--   >    toEnum 1 = (IAuthor undefined)
+--   >    toEnum 2 = (IPriceInEuro undefined)
 --   >    toEnum 3 = (IPublisherAndYear undefined undefined)
---   >    toEnum 4 = (INewerThan2000 undefined)     
---   >    toEnum 5 = (ITitle undefined)             
+--   >    toEnum 4 = (INewerThan2000 undefined)
+--   >    toEnum 5 = (ITitle undefined)
 --   >
 --   >  -- You may use the template haskell capabilites of TrieMap!
 --   >  instance TrieMap.Repr BookIndex where
@@ -194,40 +182,40 @@ data Property         = Bijective
 data Order            = Ascending
                       | Descending
 
-data Margin a         = -- | The wrapped element is not included
-                        Open     a
-                        -- | The wrapped element is included
-                      | Closed   a
-                        -- | The wrapped element just serves as a proxy. It is safe to use 'undefined'.
-                      | Infinite a
+data MarginType = -- | The wrapped element is not included
+                  Open
+                  -- | The wrapped element is included
+                | Close
+                  -- | The wrapped element just serves as a proxy. It is safe to use 'undefined'.
+                | Infinite
 
-unMargin (Open a)     = a
-unMargin (Closed a)   = a
-unMargin (Infinite a) = a
+data Margin a = Margin { marginType :: MarginType
+                       , unMargin :: a
+                       }
+
+data SelectionSet = Everything
+                  | Set !IS.IntSet
 
 -- | Try to avoid explicit usage of the type 'Selection' in your code. It might disappear soon.
-data Selection k      = Nothing'
-                      | Singleton    !Int
-                      | Set          !IS.IntSet
-                      | Everything
+data Selection k      = SSet         !SelectionSet
                       | Range        (Margin    k) (Margin    k)
                       | Union        (Selection k) (Selection k)
                       | Intersection (Selection k) (Selection k)
                       | Difference   (Selection k) (Selection k)
 
 -- | An empty 'HiggsSet' with empty indizes.
-empty     :: forall a i.(Indexable a, Index i, IndexOf a ~ i) => HiggsSet a i
-empty      = HiggsSet
-             { elements = IM.empty
-             , maxKey   = minBound
-             , indizes  = V.fromList
-                           [case property i of
-                             Bijective -> SingletonMap TM.empty
-                             Injective -> SingletonMap TM.empty
-                             _         -> MultiMap     TM.empty
-                           | i         <- [minBound..maxBound] :: [i]
-                           ]
-             }
+empty :: forall a i.(Indexable a, Index i, IndexOf a ~ i) => HiggsSet a i
+empty = HiggsSet
+        { elements = IM.empty
+        , maxKey   = minBound
+        , indizes  = V.fromList
+                      [case property i of
+                        Bijective -> SingletonMap TM.empty
+                        Injective -> SingletonMap TM.empty
+                        _         -> MultiMap     TM.empty
+                      | i         <- [minBound .. maxBound] :: [i]
+                      ]
+        }
 
 -- | /O(n)/ Count the elements within the set. Note that a 'HiggsSet' may contain elements equal according to 'Eq' more than once.
 size      :: HiggsSet a i -> Int
@@ -237,26 +225,26 @@ size       = IM.size . elements
 
 -- | Insert an element to an 'HiggsSet'. Indexing takes place according to the class instances defined before. It is not checked whether such an element (according to 'Eq') already exists. If so, the set contains more than once afterwards. In such a case you may rather want to use 'update'.
 insert    :: forall a i.(Indexable a, Index i, IndexOf a ~ i) => a -> HiggsSet a i -> HiggsSet a i
-insert x s = let a = share s x
-             in  a `seq` s { elements = IM.insert key a (elements s)
+insert a s = let a' = share s a
+             in  a' `seq` s { elements = IM.insert key a' (elements s)
                            , maxKey   = key
-                           , indizes  = V.accum 
-                                          (foldl' 
+                           , indizes  = V.accum
+                                          (foldl'
                                             (\x y-> case x of
                                                       SingletonMap m -> SingletonMap $ TM.insert y key m
-                                                      MultiMap     m -> MultiMap     $ TM.insertWith       
-                                                                                         -- unite with elements already existing at index position 
-                                                                                         IS.union            
+                                                      MultiMap     m -> MultiMap     $ TM.insertWith
+                                                                                         -- unite with elements already existing at index position
+                                                                                         IS.union
                                                                                          -- the index position "where"
-                                                                                         y 
+                                                                                         y
                                                                                          -- the new elements' key is the value of the index map
-                                                                                         (IS.singleton key) 
+                                                                                         (IS.singleton key)
                                                                                          -- the index (TMap i IntSet)
-                                                                                         m                  
+                                                                                         m
                                             )
-                                          ) 
+                                          )
                                           (indizes s)                     -- the vector
-                                          [(fromEnum x, project x a) | x <- [minBound..maxBound :: i]]
+                                          [(fromEnum x, project x a') | x <- [minBound..maxBound :: i]]
                                                                           -- list of index sections with index positions to add
                            }
              where
@@ -264,35 +252,33 @@ insert x s = let a = share s x
 
 -- | Delete /all/ elements that match the query. If you want to delete a single element, you should define a unique index.
 delete       :: (Indexable a, Index i, IndexOf a ~ i) =>                          HiggsQuery a i (Selection i) -> HiggsSet a i -> HiggsSet a i
-delete        = update (const Nothing) 
-                       
+delete        = update (const Nothing)
+
 -- | Update /all/ elements that match the query. If you want to update a single element, you should define a unique index. If the update function evaluates to 'Nothing' the element is removed from the set. Note that the resulting element gets completely indexed again, even if certain fields were not affected. You may want to have a look at 'updateUnsafe'.
 update       :: (Indexable a, Index i, IndexOf a ~ i) =>        (a -> Maybe a) -> HiggsQuery a i (Selection i) -> HiggsSet a i -> HiggsSet a i
 update        = updateUnsafe [minBound..maxBound]
 
 -- | Like 'update', but only the supplied indizes are updated. DANGER: It is possible to corrupt the 'HiggsSet'.
-updateUnsafe :: (Indexable a, Index i, IndexOf a ~ i) => [i] -> (a -> Maybe a) -> HiggsQuery a i (Selection i) -> HiggsSet a i -> HiggsSet a i 
+updateUnsafe :: (Indexable a, Index i, IndexOf a ~ i) => [i] -> (a -> Maybe a) -> HiggsQuery a i (Selection i) -> HiggsSet a i -> HiggsSet a i
 updateUnsafe ix f query
   = \s-> case runReader (query >>= resolve) s of
-           Nothing'      -> s
-           Singleton  x  -> g s x
-           Set        xs -> foldl' g s (IS.toList xs)
-           Everything    -> fromList $ mapMaybe f $ toList s
-  where 
+           Set xs     -> foldl' g s (IS.toList xs)
+           Everything -> fromList $ mapMaybe f $ toList s
+  where
     g acc i = case IM.lookup i (elements acc) of
                 Nothing -> acc
-                Just a  -> 
+                Just a  ->
                   case f a of
-                    Nothing -> 
+                    Nothing ->
                       acc { elements = IM.delete i (elements acc)
                           , indizes  = V.accum
                                          (foldl'
                                            (\m k-> case m of
                                                      SingletonMap m' -> SingletonMap $ TM.delete k m'
                                                      MultiMap     m' -> MultiMap     $ TM.update
-                                                                                         (\is-> let is' = IS.delete i is 
+                                                                                         (\is-> let is' = IS.delete i is
                                                                                                 in  if IS.null is'
-                                                                                                      then Nothing 
+                                                                                                      then Nothing
                                                                                                       else Just is'
                                                                                          )
                                                                                          k
@@ -302,7 +288,7 @@ updateUnsafe ix f query
                                          (indizes acc)
                                          [ (fromEnum x, project x a) | x <- ix ]
                           }
-                    Just a' -> 
+                    Just a' ->
                       acc { elements = IM.insert i a' (elements acc)
                           , indizes  = V.accum
                                          (foldl'
@@ -311,21 +297,21 @@ updateUnsafe ix f query
                                                                                          k
                                                                                          i
                                                                                          m'
-                                                     MultiMap     m' -> MultiMap     $ TM.insertWith 
+                                                     MultiMap     m' -> MultiMap     $ TM.insertWith
                                                                                          IS.union
                                                                                          k
                                                                                          (IS.singleton i)
                                                                                          m'
-                                           ) 
+                                           )
                                          )
                                          (V.accum
                                            (foldl'
                                              (\m k-> case m of
                                                        SingletonMap m' -> SingletonMap $ TM.delete k m'
                                                        MultiMap     m' -> MultiMap     $ TM.update
-                                                                                           (\is-> let is' = IS.delete i is 
-                                                                                                  in  if IS.null is' 
-                                                                                                        then Nothing 
+                                                                                           (\is-> let is' = IS.delete i is
+                                                                                                  in  if IS.null is'
+                                                                                                        then Nothing
                                                                                                         else Just is'
                                                                                            )
                                                                                            k
@@ -351,112 +337,67 @@ fromList    = foldl' (flip insert) empty
 
 ------------------
 
-resolve    :: forall a i.(Indexable a, Index i, IndexOf a ~ i) 
-              => Selection i 
-              -> HiggsQuery a i (Selection i)
+resolve    :: forall a i.(Indexable a, Index i, IndexOf a ~ i)
+              => Selection i
+              -> HiggsQuery a i SelectionSet
 
-resolve Nothing'
-  = return Nothing'
+resolve (SSet s)
+  = return s
 
-resolve (Singleton i)
-  = return (Singleton i)
-
-resolve (Set a)            
-  = if IS.null a
-      then return $ Nothing'
-      else return $ Set a
-
-resolve Everything
-  = return Everything
-
-resolve (Range a b)        
-  = do ind <- index (unMargin a) <$> ask
+resolve (Range a b)
+  = do ind <- fmap (index (unMargin a)) ask
        case ind of
          SingletonMap ind1 -> do let ind2 = case a of
-                                              Infinite k -> ind1
+                                              Margin Infinite _ -> ind1
                                               _          -> let (ma,la) = TM.search (unMargin a) ind1
                                                             in  f a ma $ TM.after la
                                  let ind3 = case b of
-                                              Infinite k -> ind2
+                                              Margin Infinite _ -> ind2
                                               _          -> let (mb,lb) = TM.search (unMargin b) ind2
                                                             in  f b mb $ TM.before lb
-                                 return $ case TM.elems ind3 of
-                                            []  -> Nothing'
-                                            [i] -> Singleton i
-                                            is  -> Set $ foldl' (flip IS.insert) IS.empty is
+                                 return $ Set $ IS.fromList $ TM.elems ind3
          MultiMap     ind1 -> do let ind2 = case a of
-                                              Infinite k -> ind1
+                                              Margin Infinite _ -> ind1
                                               _          -> let (ma,la) = TM.search (unMargin a) ind1
                                                             in  f a ma $ TM.after la
                                  let ind3 = case b of
-                                              Infinite k -> ind2
+                                              Margin Infinite _ -> ind2
                                               _          -> let (mb,lb) = TM.search (unMargin b) ind2
                                                             in  f b mb $ TM.before lb
-                                 return $ case TM.elems ind3 of
-                                            []   -> Nothing'
-                                            [is] -> Set is
-                                            iss  -> Set $ foldl' IS.union IS.empty iss
+                                 return $ Set $ foldl' IS.union IS.empty $ TM.elems ind3
   where
     f           :: Margin i -> Maybe b -> TM.TMap i b -> TM.TMap i b
-    f (Closed x) = maybe id (TM.insert x)
+    f (Margin Close x) = maybe id (TM.insert x)
     f _          = const id
 
-resolve (Union a b)
-  = do a <- resolve a
-       case a of
-         Nothing'     -> resolve b
-         Singleton i  -> do b <- resolve b
-                            return $ case b of
-                                       Nothing'      -> Singleton i
-                                       Singleton j   -> Set $ IS.fromList [i,j]
-                                       Set       js  -> Set $ IS.insert i js
-                                       Everything    -> Everything
-         Set       is -> do b <- resolve b
-                            return $ case b of
-                                       Nothing'      -> Set is
-                                       Singleton j   -> Set $ IS.insert j is
-                                       Set       js  -> Set $ IS.union is js
-                                       Everything    -> Everything
-         Everything   -> return Everything
+resolve (Union a b) = do
+    a' <- resolve a
+    case a' of
+        Everything -> return a'
+        Set as     -> do
+            b' <- resolve b
+            case b' of
+                Everything -> return b'
+                Set bs     -> return $ Set $ IS.union as bs
 
-resolve (Intersection a b) 
-  = do a <- resolve a
-       case a of
-         Nothing'     -> return a
-         Singleton i  -> do b <- resolve b
-                            return $ case b of
-                                       Nothing'      -> Nothing'
-                                       Singleton j   -> if i == j
-                                                          then Singleton i
-                                                          else Nothing'
-                                       Set       js  -> if IS.member i js
-                                                          then Singleton i
-                                                          else Nothing'
-                                       Everything    -> Singleton i
-         Set       is -> do b <- resolve b
-                            return $ case b of
-                                       Nothing'      -> Nothing'
-                                       Singleton j   -> if IS.member j is
-                                                          then Singleton j
-                                                          else Nothing'
-                                       Set       js  -> Set $ IS.intersection is js
-                                       Everything    -> Set is
-         Everything   -> resolve b
+resolve (Intersection a b)  = do
+    a' <- resolve a
+    b' <- resolve b
+    case (a', b') of
+        (Everything, _) -> return b'
+        (_, Everything) -> return a'
+        (Set as, Set bs) -> return $ Set $ IS.intersection as bs
 
-resolve (Difference a b)
-  = do a' <- resolve a
-       b' <- resolve b
-       case (a', b') of
-           (Nothing', _)   -> return Nothing'
-           (_, Everything) -> return Nothing'
-           (_, Nothing')   -> return a'
-           (Everything, _) -> do
-               im <- asks elements
-               let is = IM.foldWithKey (\key _ is -> IS.insert key is) IS.empty im
-               resolve (Difference (Set is) b')
-           (Singleton i, _) -> resolve (Difference (Set (IS.singleton i)) b')
-           (_, Singleton i) -> resolve (Difference a' (Set (IS.singleton i)))
-           (Set as, Set bs) -> return $ Set $ IS.difference as bs
+resolve (Difference a b) = do
+    a' <- resolve a
+    b' <- resolve b
+    case (b', a') of
+        (Everything, _) -> return $ Set $ IS.empty
+        (Set bs, Everything) -> do
+            im <- asks elements
+            let as = IM.foldWithKey (\key _ s -> IS.insert key s) IS.empty im
+            return $ Set $ IS.difference as bs
+        (Set bs, Set as) -> return $ Set $ IS.difference as bs
 
 ----------------------------
 
@@ -464,40 +405,40 @@ resolve (Difference a b)
 --
 --   > foldl union nothing xs
 nothing          :: HiggsQuery a i (Selection i)
-nothing           = return Nothing'
+nothing           = return $ SSet $ Set $ IS.empty
 
 -- | Select all elements. Do not hesitate to use it as a base element of a 'foldl'.
 --   The selection doesn't allocate anything and is optimised away:
 --
 --   > foldl intersection everything xs
 everything       :: HiggsQuery a i (Selection i)
-everything        = return Everything
+everything        = return $ SSet Everything
 
 -- | Select all elements that matching the given index position.
 equals           :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-equals i          = return $ Range (Closed i) (Closed i)
+equals i          = return $ Range (Margin Close i) (Margin Close i)
 
 -- | Select all elements that are /strictly/ greater than the given index position (only within the given subindex).
 greater          :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-greater i         = return $ Range (Open i) (Infinite i)
+greater i         = return $ Range (Margin Open i) (Margin Infinite i)
 
 -- | Select all elements that are greater or equal than the given index position (only within the given subindex).
 greaterEq        :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-greaterEq i       = return $ Range (Closed i) (Infinite i)
+greaterEq i       = return $ Range (Margin Close i) (Margin Infinite i)
 
 -- | Select all elements that are /strictly/ lower than the given index position (only within the given subindex).
 lower            :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-lower i           = return $ Range (Infinite i) (Open i)
+lower i           = return $ Range (Margin Infinite i) (Margin Open i)
 
 -- | Select all elements that are lower or equal than the given index position (only within the given subindex).
 lowerEq          :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-lowerEq i         = return $ Range (Infinite i) (Closed i)
+lowerEq i         = return $ Range (Margin Infinite i) (Margin Close i)
 
 -- | Selects all elements within a certain range (must not leave a subindex).
 range            :: (Indexable a, Index i, IndexOf a ~ i) => Margin i -- ^ the lower margin
                                                           -> Margin i -- ^ the uppper margin
-                                                          -> HiggsQuery a i (Selection i) 
-range a b         = return $ Range a b 
+                                                          -> HiggsQuery a i (Selection i)
+range a b         = return $ Range a b
 
 -- | The union of two selections. The underlying representation uses patricia trees for which unions are quite efficient.
 union            :: HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i)
@@ -515,25 +456,20 @@ difference a b  = a >>= \a'-> b >>= \b'-> (return $ Difference a' b')
 -- | Returns how many elements match a certain query.
 querySize       :: (Indexable a, Index i, IndexOf a ~ i) => HiggsQuery a i (Selection i) -> HiggsSet a i -> Int
 querySize q s    = case runReader (q >>= resolve) s of
-                     Nothing'     -> 0
-                     Singleton i  -> 1
-                     Set       is -> IS.size is
-                     Everything   -> IM.size (elements s)
+                     Set is     -> IS.size is
+                     Everything -> IM.size (elements s)
 
 -- | Returns all elements matching a certain query as a 'Data.Set.Set'. Double entries are removed, but construction of the set takes /O(n*log(n)/.
 querySet        :: (Indexable a, Ord a, Index i, IndexOf a ~ i) => HiggsQuery a i (Selection i) -> HiggsSet a i -> S.Set a
-querySet q s     = S.fromList $ queryList q s 
+querySet q s     = S.fromList $ queryList q s
 
--- | Returns all elements matching a certain query as a list in arbitrary order. 
+-- | Returns all elements matching a certain query as a list in arbitrary order.
 queryList       :: (Indexable a, Index i, IndexOf a ~ i) => HiggsQuery a i (Selection i) -> HiggsSet a i -> [a]
 queryList q s    = case runReader (q >>= resolve) s of
-                     Nothing'      -> []
-                     Singleton i   -> return $ fromMaybe (error "corrupted HiggsSet (error 2a)") $ IM.lookup i (elements s)
-                     Set       is  -> map 
+                     Set is     -> map
                                         (\i->  fromMaybe (error "corrupted HiggsSet (error 2b)") $ IM.lookup i (elements s))
                                         (IS.toList is)
-                     Everything    -> toList s
-
+                     Everything -> toList s
 
 -- | Looks up an element by index position. If the index is not unique an arbitrary (but not random!) element is returned.
 lookup             :: (Indexable a, Index i, IndexOf a ~ i) =>                          i -> HiggsSet a i -> Maybe a
@@ -555,127 +491,109 @@ updateLookupUnsafe ix f i s
 
 -- | Some examples of how to use this function w.r.t. our example type:
 --
---   List all books more expensive than 10 Euro by price in an ascending order. 
+--   List all books more expensive than 10 Euro by price in an ascending order.
 --
---   > let p = concatMap snd $ groupOver 
+--   > let p = concatMap snd $ groupOver
 --   >                           Ascending
 --   >                           everything
---   >                           [(Infinite (IPriceInEuro 10), Infinite (IPriceInEuro undefined)]
+--   >                           [(Margin Infinite (IPriceInEuro 10), Margin Infinite (IPriceInEuro undefined)]
 --   >                           myHiggsSet
---  
---    
---   List all books ordered by year from 1987 to 2010 which were either 
---   written by one of the Simons or have a /Haskell/ in the title and were written 
+--
+--
+--   List all books ordered by year from 1987 to 2010 which were either
+--   written by one of the Simons or have a /Haskell/ in the title and were written
 --   1990 or later. In all cases, it mustn't be more expensive than 40 Euro.
--- 
---   > let p = concatMap snd $ groupOver 
+--
+--   > let p = concatMap snd $ groupOver
 --   >                           Descending
---   >                           ( (              equals (IAuthor "S.P. Jones") 
---   >                             `union`        equals (IAuthor "S. Marlow") 
---   >                             `union`        (                equals    (ITitle "Haskell") 
+--   >                           ( (              equals (IAuthor "S.P. Jones")
+--   >                             `union`        equals (IAuthor "S. Marlow")
+--   >                             `union`        (                equals    (ITitle "Haskell")
 --   >                                              `intersection` greaterEq (IYear 1990)
 --   >                                            )
 --   >                             )
 --   >                             `intersection` lowerEq (IPrice 40)
 --   >                           )
---   >                           [(Closed (IYear 1987), Open (IYear 2011)]
+--   >                           [Margin Close (IYear 1987), Margin Open (IYear 2011)]
 --   >                           myHiggsSet
---  
+--
 --   In certain applications one needs something that is @LIMIT@ in SQL for getting the result segmentwise.
 --   In this implementation there is no better way than walking along the index. Thanks to lazyness we save
 --   some lookups if we throw elements right away and don't touch them. So do your @LIMIT@ like this:
 --
 --   > take 10 $ drop 100 p
-groupOver         :: forall a i. (Indexable a, Index i, IndexOf a ~ i) 
-                     => Order                          -- ^ Whether to traverse the given index segments in 'Ascending' or 'Descending' order. 
-                     -> HiggsQuery a i (Selection i)   -- ^ A selection that every element must be part of. 
+groupOver         :: forall a i. (Indexable a, Index i, IndexOf a ~ i)
+                     => Order                          -- ^ Whether to traverse the given index segments in 'Ascending' or 'Descending' order.
+                     -> HiggsQuery a i (Selection i)   -- ^ A selection that every element must be part of.
                      -> [(Margin i, Margin i)]         -- ^ A list of index segments @(lowerBound, upperBound)@ that we traverse over.
                                                        --   It is not checked whether neighbouring segments overlap or are in the right order.
-                     -> HiggsSet a i                   
+                     -> HiggsSet a i
                      -> [(i,[a])]                      -- ^ Every index positions elements got intersected with the supplied selection.
                                                        --   The associated list is in arbitrary order. Since we traverse over the whole segment
                                                        --   all index positions appear what also means that the associated list might be empty.
                                                        --   You may want to apply your favourite sorting algorithm to group\/sort on the second level.
 
-groupOver order query intervals s 
-  = concatMap 
-     (f (runReader (query >>= resolve) s)) 
+groupOver order query intervals s
+  = concatMap
+     (f (runReader (query >>= resolve) s))
      intervals
     where
-       f selection (a, b) 
+       f selection (a, b)
                   = case index (unMargin a) s of
                       SingletonMap ind1 -> let    ind2      = case a of
-                                                                Infinite k -> ind1
+                                                                Margin Infinite _ -> ind1
                                                                 _          -> let (ma,la) = TM.search (unMargin a) ind1
                                                                               in  t a ma $ TM.after la
                                            in let ind3      = case b of
-                                                                Infinite k -> ind2
+                                                                Margin Infinite _ -> ind2
                                                                 _          -> let (mb,lb) = TM.search (unMargin b) ind2
                                                                               in  t b mb $ TM.before lb
                                            in let traverse  = case order of
                                                                 Ascending  -> TM.assocs
                                                                 Descending -> toListDesc
                                            in case selection of
-                                                Nothing'     -> map 
-                                                                  (\(k,_)->(k,[]))
-                                                                  (traverse ind3)
-                                                Singleton i  -> map
-                                                                  (\(k,y)->(k,) $ if i == y
-                                                                                    then [fromMaybe (error "corrupted HiggsSet (error 3a)") $ IM.lookup i (elements s)]
-                                                                                    else []
-                                                                  )
-                                                                  (traverse ind3)
-                                                Set       is -> map
+                                                Set is     -> map
                                                                   (\(k,y)->(k,) $ if IS.member y is
                                                                                     then [fromMaybe (error "corrupted HiggsSet (error 3b)") $ IM.lookup y (elements s)]
                                                                                     else []
                                                                   )
                                                                   (traverse ind3)
-                                                Everything   -> map
+                                                Everything -> map
                                                                   (\(k,y)->(k,) $        [fromMaybe (error "corrupted HiggsSet (error 3c)") $ IM.lookup y (elements s)]
                                                                   )
                                                                   (traverse ind3)
                       MultiMap     ind1 -> let    ind2      = case a of
-                                                                Infinite k -> ind1
+                                                                Margin Infinite _ -> ind1
                                                                 _          -> let (ma,la) = TM.search (unMargin a) ind1
                                                                               in  t a ma $ TM.after la
                                            in let ind3      = case b of
-                                                                Infinite k -> ind2
+                                                                Margin Infinite _ -> ind2
                                                                 _          -> let (mb,lb) = TM.search (unMargin b) ind2
                                                                               in  t b mb $ TM.before lb
                                            in let traverse  = case order of
                                                                 Ascending  -> TM.assocs
                                                                 Descending -> toListDesc
                                            in case selection of
-                                                Nothing'     -> map 
-                                                                  (\(k,_)->(k,[]))
-                                                                  (traverse ind3)
-                                                Singleton i  -> map
-                                                                  (\(k,y)->(k,) $ if IS.member i y
-                                                                                    then [fromMaybe (error "corrupted HiggsSet (error 3d)") $ IM.lookup i (elements s)]
-                                                                                    else []
-                                                                  )
-                                                                  (traverse ind3)
-                                                Set       is -> map
-                                                                  (\(k,y)->(k,) $ map 
+                                                Set is     -> map
+                                                                  (\(k,y)->(k,) $ map
                                                                                     (fromMaybe (error "corrupted HiggsSet (error 3e)") . ((flip IM.lookup) (elements s)))
                                                                                     (IS.toList $ IS.intersection is y)
                                                                   )
                                                                   (traverse ind3)
-                                                Everything   -> map
-                                                                  (\(k,y)->(k,) $ map 
+                                                Everything -> map
+                                                                  (\(k,y)->(k,) $ map
                                                                                     (fromMaybe (error "corrupted HiggsSet (error 3f)") . ((flip IM.lookup) (elements s)))
                                                                                     (IS.toList y)
                                                                   )
                                                                   (traverse ind3)
        t            :: Margin i -> Maybe b -> TM.TMap i b -> TM.TMap i b
-       t (Closed x)  = maybe id (TM.insert x)
+       t (Margin Close x)  = maybe id (TM.insert x)
        t _           = const id
 
 toListDesc  :: (TM.TKey i) => TM.TMap i a -> [(i,a)]
 toListDesc m = build (\ c n -> TM.foldlWithKey (\z x y-> (curry c) x y z) n m)
 
--- Instances
+-- instances
 
 instance (Indexable a, Index i, IndexOf a ~ i, NFData a, NFData i) => NFData (HiggsSet a i) where
   rnf s  = (rnf $ elements s) `seq` V.foldl' (\a b-> a `seq` rnf b) () (indizes s)
