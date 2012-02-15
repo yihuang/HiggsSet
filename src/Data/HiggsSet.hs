@@ -61,6 +61,7 @@ module Data.HiggsSet
   , range
   , union
   , intersection
+  , difference
     -- * Query Application
   , querySize
   , querySet
@@ -74,7 +75,7 @@ module Data.HiggsSet
   , Order    (..)
   , Margin   (..)
   , HiggsQuery ()
-  , Selection  ()
+  , Selection  (..)
   ) where
    
 
@@ -212,6 +213,7 @@ data Selection k      = Nothing'
                       | Range        (Margin    k) (Margin    k)
                       | Union        (Selection k) (Selection k)
                       | Intersection (Selection k) (Selection k)
+                      | Difference   (Selection k) (Selection k)
 
 -- | An empty 'HiggsSet' with empty indizes.
 empty     :: forall a i.(Indexable a, Index i, IndexOf a ~ i) => HiggsSet a i
@@ -441,6 +443,20 @@ resolve (Intersection a b)
                                        Everything    -> Set is
          Everything   -> resolve b
 
+resolve (Difference a b)
+  = do a' <- resolve a
+       b' <- resolve b
+       case (a', b') of
+           (Nothing', _)   -> return Nothing'
+           (_, Everything) -> return Nothing'
+           (_, Nothing')   -> return a'
+           (Everything, _) -> do
+               im <- asks elements
+               let is = IM.foldWithKey (\key _ is -> IS.insert key is) IS.empty im
+               resolve (Difference (Set is) b')
+           (Singleton i, _) -> resolve (Difference (Set (IS.singleton i)) b')
+           (_, Singleton i) -> resolve (Difference a' (Set (IS.singleton i)))
+           (Set as, Set bs) -> return $ Set $ IS.difference as bs
 
 ----------------------------
 
@@ -490,6 +506,10 @@ union a b         = a >>= \a'-> b >>= \b'-> (return $ Union a' b')
 -- | The intersection of two selections. The underlying representation uses patricia trees for which intersections are quite efficient.
 intersection     :: HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i)
 intersection a b  = a >>= \a'-> b >>= \b'-> (return $ Intersection a' b')
+
+-- | The difference of two selections. The underlying representation uses patricia trees for which differences are quite efficient.
+difference     :: HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i)
+difference a b  = a >>= \a'-> b >>= \b'-> (return $ Difference a' b')
 
 
 -- | Returns how many elements match a certain query.
