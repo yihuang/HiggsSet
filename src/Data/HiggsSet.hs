@@ -75,8 +75,8 @@ module Data.HiggsSet
   , Order        (..)
   , Margin       (..)
   , HiggsQuery   ()
-  , SelectionSet (..)
-  , Selection    (..)
+  , SelectionSet ()
+  , Selection    ()
   ) where
 
 import Prelude hiding (lookup)
@@ -406,54 +406,53 @@ resolve (Difference a b) = do
 -- | An empty selection. Do not hesitate to use it as a base element of a 'foldl':
 --
 --   > foldl union nothing xs
-nothing          :: HiggsQuery a i (Selection i)
-nothing           = return $ SSet $ Set $ IS.empty
+nothing :: Selection i
+nothing = SSet $ Set $ IS.empty
 
 -- | Select all elements. Do not hesitate to use it as a base element of a 'foldl'.
 --   The selection doesn't allocate anything and is optimised away:
 --
 --   > foldl intersection everything xs
-everything       :: HiggsQuery a i (Selection i)
-everything        = return $ SSet Everything
+everything :: Selection i
+everything = SSet Everything
 
 -- | Select all elements that matching the given index position.
-equals           :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-equals i          = return $ Range (Closed i) (Closed i)
+equals   :: i -> Selection i
+equals i = Range (Closed i) (Closed i)
 
 -- | Select all elements that are /strictly/ greater than the given index position (only within the given subindex).
-greater          :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-greater i         = return $ Range (Open i) (Infinite i)
+greater   :: i -> Selection i
+greater i = Range (Open i) (Infinite i)
 
 -- | Select all elements that are greater or equal than the given index position (only within the given subindex).
-greaterEq        :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-greaterEq i       = return $ Range (Closed i) (Infinite i)
+greaterEq   :: i -> Selection i
+greaterEq i = Range (Closed i) (Infinite i)
 
 -- | Select all elements that are /strictly/ lower than the given index position (only within the given subindex).
-lower            :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-lower i           = return $ Range (Infinite i) (Open i)
+lower   :: i -> Selection i
+lower i = Range (Infinite i) (Open i)
 
 -- | Select all elements that are lower or equal than the given index position (only within the given subindex).
-lowerEq          :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsQuery a i (Selection i)
-lowerEq i         = return $ Range (Infinite i) (Closed i)
+lowerEq   :: i -> Selection i
+lowerEq i = Range (Infinite i) (Closed i)
 
 -- | Selects all elements within a certain range (must not leave a subindex).
-range            :: (Indexable a, Index i, IndexOf a ~ i) => Margin i -- ^ the lower margin
-                                                          -> Margin i -- ^ the uppper margin
-                                                          -> HiggsQuery a i (Selection i)
-range a b         = return $ Range a b
+range :: Margin i -- ^ the lower margin
+      -> Margin i -- ^ the uppper margin
+      -> Selection i
+range = Range
 
 -- | The union of two selections. The underlying representation uses patricia trees for which unions are quite efficient.
-union            :: HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i)
-union a b         = a >>= \a'-> b >>= \b'-> (return $ Union a' b')
+union :: Selection i -> Selection i -> Selection i
+union = Union
 
 -- | The intersection of two selections. The underlying representation uses patricia trees for which intersections are quite efficient.
-intersection     :: HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i)
-intersection a b  = a >>= \a'-> b >>= \b'-> (return $ Intersection a' b')
+intersection :: Selection i -> Selection i -> Selection i
+intersection = Intersection
 
 -- | The difference of two selections. The underlying representation uses patricia trees for which differences are quite efficient.
-difference     :: HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i) -> HiggsQuery a i (Selection i)
-difference a b  = a >>= \a'-> b >>= \b'-> (return $ Difference a' b')
-
+difference :: Selection i -> Selection i -> Selection i
+difference = Difference
 
 -- | Returns how many elements match a certain query.
 querySize       :: (Indexable a, Index i, IndexOf a ~ i) => HiggsQuery a i (Selection i) -> HiggsSet a i -> Int
@@ -474,8 +473,8 @@ queryList q s    = case runReader (q >>= resolve) s of
                      Everything -> toList s
 
 -- | Looks up an element by index position. If the index is not unique an arbitrary (but not random!) element is returned.
-lookup             :: (Indexable a, Index i, IndexOf a ~ i) =>                          i -> HiggsSet a i -> Maybe a
-lookup i s          = case queryList (equals i) s of
+lookup             :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsSet a i -> Maybe a
+lookup i s          = case queryList (return $ equals i) s of
                         []    -> Nothing
                         (x:_) -> Just x
 
@@ -489,7 +488,7 @@ updateLookupUnsafe :: (Indexable a, Index i, IndexOf a ~ i) => [i] -> (a -> Mayb
 updateLookupUnsafe ix f i s
                     = case lookup i s of
                         Nothing -> (Nothing, s)
-                        Just a  -> (f a, updateUnsafe ix f (equals i) s)
+                        Just a  -> (f a, updateUnsafe ix f (return $ equals i) s)
 
 -- | Some examples of how to use this function w.r.t. our example type:
 --
