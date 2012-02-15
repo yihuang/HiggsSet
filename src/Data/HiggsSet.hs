@@ -71,11 +71,12 @@ module Data.HiggsSet
   , toList
   , fromList
      -- * Auxillary Types
-  , Property (..)
-  , Order    (..)
-  , Margin   (..)
-  , HiggsQuery ()
-  , Selection  (..)
+  , Property     (..)
+  , Order        (..)
+  , Margin       (..)
+  , HiggsQuery   ()
+  , SelectionSet (..)
+  , Selection    (..)
   ) where
 
 import Prelude hiding (lookup)
