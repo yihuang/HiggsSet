@@ -63,7 +63,7 @@ Cabal-version:       >=1.6
 
 Library
   -- Modules exported by the library.
-  --ghc-options:         -O2
+  ghc-options:         -O2 -Wall
   hs-source-dirs:      src
   Exposed-modules:     Data.HiggsSet
   Build-depends:       base >= 4.2 && < 6
