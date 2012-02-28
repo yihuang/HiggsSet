@@ -77,6 +77,8 @@ module Data.HiggsSet
   , HiggsQuery   ()
   , SelectionSet ()
   , Selection    ()
+
+  , module Data.HiggsSet.TH
   ) where
 
 import Prelude hiding (lookup, all, or, and)
@@ -91,6 +93,8 @@ import qualified Data.IntSet  as IS
 import qualified Data.IntMap  as IM
 import qualified Data.TrieMap as TM
 import qualified Data.Vector  as V
+
+import Data.HiggsSet.TH
 
 data IndexMap i   = SingletonMap !(TM.TMap i Int)
                   | MultiMap     !(TM.TMap i IS.IntSet)
