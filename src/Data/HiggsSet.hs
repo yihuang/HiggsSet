@@ -51,17 +51,17 @@ module Data.HiggsSet
   , updateLookup
   , updateLookupUnsafe
    -- * Query
-  , nothing
-  , everything
-  , equals
-  , greater
-  , greaterEq
-  , lower
-  , lowerEq
+  , none
+  , all
+  , eq
+  , gt
+  , gte
+  , lt
+  , lte
   , range
-  , union
-  , intersection
-  , difference
+  , or
+  , and
+  , diff
     -- * Query Application
   , querySize
   , querySet
@@ -79,10 +79,10 @@ module Data.HiggsSet
   , Selection    ()
   ) where
 
-import Prelude hiding (lookup)
+import Prelude hiding (lookup, all, or, and)
 import GHC.Exts (build)
 import Data.Maybe (mapMaybe, fromMaybe)
-import Data.List hiding (insert, null, lookup, delete, union)
+import Data.List hiding (insert, null, lookup, delete, all, or, and)
 import Control.DeepSeq (NFData(..))
 import Control.Monad.Reader (Reader, runReader, ask, asks)
 
@@ -405,36 +405,36 @@ resolve (Difference a b) = do
 
 -- | An empty selection. Do not hesitate to use it as a base element of a 'foldl':
 --
---   > foldl union nothing xs
-nothing :: Selection i
-nothing = SSet $ Set $ IS.empty
+--   > foldl or none xs
+none :: Selection i
+none = SSet $ Set $ IS.empty
 
 -- | Select all elements. Do not hesitate to use it as a base element of a 'foldl'.
 --   The selection doesn't allocate anything and is optimised away:
 --
---   > foldl intersection everything xs
-everything :: Selection i
-everything = SSet Everything
+--   > foldl and all xs
+all :: Selection i
+all = SSet Everything
 
 -- | Select all elements that matching the given index position.
-equals   :: i -> Selection i
-equals i = Range (Closed i) (Closed i)
+eq   :: i -> Selection i
+eq i = Range (Closed i) (Closed i)
 
 -- | Select all elements that are /strictly/ greater than the given index position (only within the given subindex).
-greater   :: i -> Selection i
-greater i = Range (Open i) (Infinite i)
+gt   :: i -> Selection i
+gt i = Range (Open i) (Infinite i)
 
 -- | Select all elements that are greater or equal than the given index position (only within the given subindex).
-greaterEq   :: i -> Selection i
-greaterEq i = Range (Closed i) (Infinite i)
+gte   :: i -> Selection i
+gte i = Range (Closed i) (Infinite i)
 
 -- | Select all elements that are /strictly/ lower than the given index position (only within the given subindex).
-lower   :: i -> Selection i
-lower i = Range (Infinite i) (Open i)
+lt   :: i -> Selection i
+lt i = Range (Infinite i) (Open i)
 
 -- | Select all elements that are lower or equal than the given index position (only within the given subindex).
-lowerEq   :: i -> Selection i
-lowerEq i = Range (Infinite i) (Closed i)
+lte   :: i -> Selection i
+lte i = Range (Infinite i) (Closed i)
 
 -- | Selects all elements within a certain range (must not leave a subindex).
 range :: Margin i -- ^ the lower margin
@@ -443,16 +443,16 @@ range :: Margin i -- ^ the lower margin
 range = Range
 
 -- | The union of two selections. The underlying representation uses patricia trees for which unions are quite efficient.
-union :: Selection i -> Selection i -> Selection i
-union = Union
+or :: Selection i -> Selection i -> Selection i
+or = Union
 
--- | The intersection of two selections. The underlying representation uses patricia trees for which intersections are quite efficient.
-intersection :: Selection i -> Selection i -> Selection i
-intersection = Intersection
+-- | The and of two selections. The underlying representation uses patricia trees for which ands are quite efficient.
+and :: Selection i -> Selection i -> Selection i
+and = Intersection
 
--- | The difference of two selections. The underlying representation uses patricia trees for which differences are quite efficient.
-difference :: Selection i -> Selection i -> Selection i
-difference = Difference
+-- | The diff of two selections. The underlying representation uses patricia trees for which diffs are quite efficient.
+diff :: Selection i -> Selection i -> Selection i
+diff = Difference
 
 -- | Returns how many elements match a certain query.
 querySize       :: (Indexable a, Index i, IndexOf a ~ i) => HiggsQuery a i (Selection i) -> HiggsSet a i -> Int
@@ -474,7 +474,7 @@ queryList q s    = case runReader (q >>= resolve) s of
 
 -- | Looks up an element by index position. If the index is not unique an arbitrary (but not random!) element is returned.
 lookup             :: (Indexable a, Index i, IndexOf a ~ i) => i -> HiggsSet a i -> Maybe a
-lookup i s          = case queryList (return $ equals i) s of
+lookup i s          = case queryList (return $ eq i) s of
                         []    -> Nothing
                         (x:_) -> Just x
 
@@ -488,7 +488,7 @@ updateLookupUnsafe :: (Indexable a, Index i, IndexOf a ~ i) => [i] -> (a -> Mayb
 updateLookupUnsafe ix f i s
                     = case lookup i s of
                         Nothing -> (Nothing, s)
-                        Just a  -> (f a, updateUnsafe ix f (return $ equals i) s)
+                        Just a  -> (f a, updateUnsafe ix f (return $ eq i) s)
 
 -- | Some examples of how to use this function w.r.t. our example type:
 --
@@ -496,7 +496,7 @@ updateLookupUnsafe ix f i s
 --
 --   > let p = concatMap snd $ groupOver
 --   >                           Ascending
---   >                           everything
+--   >                           all
 --   >                           [(Infinite (IPriceInEuro 10), Infinite (IPriceInEuro undefined)]
 --   >                           myHiggsSet
 --
@@ -507,13 +507,13 @@ updateLookupUnsafe ix f i s
 --
 --   > let p = concatMap snd $ groupOver
 --   >                           Descending
---   >                           ( (              equals (IAuthor "S.P. Jones")
---   >                             `union`        equals (IAuthor "S. Marlow")
---   >                             `union`        (                equals    (ITitle "Haskell")
---   >                                              `intersection` greaterEq (IYear 1990)
+--   >                           ( (              eq (IAuthor "S.P. Jones")
+--   >                             `or`        eq (IAuthor "S. Marlow")
+--   >                             `or`        (                eq    (ITitle "Haskell")
+--   >                                              `and` gte (IYear 1990)
 --   >                                            )
 --   >                             )
---   >                             `intersection` lowerEq (IPrice 40)
+--   >                             `and` lte (IPrice 40)
 --   >                           )
 --   >                           [Closed (IYear 1987), Open (IYear 2011)]
 --   >                           myHiggsSet
